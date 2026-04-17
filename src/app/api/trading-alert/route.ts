@@ -11,54 +11,90 @@
 //
 // TradingView Alert Webhook URL:
 //   https://line-webhook-proxy-one.vercel.app/api/trading-alert
+//
+// Pine Script ส่ง payload แบบนี้:
+//   { "type": "NOT_CONFIRM" | "CONFIRMED",
+//     "dir":  "BULL" | "BEAR",
+//     "pair": "EURUSD",
+//     "tf":   "5",
+//     "price": "1.0850",
+//     "time": "14:30" }
 // ===================================================================
 
 import { NextRequest, NextResponse } from "next/server";
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
 
+type AlertType = "NOT_CONFIRM" | "CONFIRMED" | string;
+type AlertDir  = "BULL" | "BEAR" | string;
+
 interface TradingAlert {
-  type?: string;
-  dir?: string;
+  type?: AlertType;
+  dir?:  AlertDir;
   pair?: string;
-  tf?: string;
+  tf?:   string;
   price?: string;
   time?: string;
 }
 
-function formatAlert(data: TradingAlert): string {
-  const dir = data.dir || "?";
-  const pair = data.pair || "?";
-  const price = data.price || "?";
-  const tf = data.tf || "H1";
-  const time = data.time || new Date().toISOString().slice(0, 16);
+function tfLabel(tf?: string): string {
+  if (!tf) return "M5";
+  switch (tf) {
+    case "1":   return "M1";
+    case "3":   return "M3";
+    case "5":   return "M5";
+    case "15":  return "M15";
+    case "30":  return "M30";
+    case "60":  return "H1";
+    case "240": return "H4";
+    case "D":
+    case "1D":  return "D1";
+    case "W":
+    case "1W":  return "W1";
+    default:    return tf;
+  }
+}
 
-  const emoji = dir === "BULL" ? "🟢" : "🔴";
-  const arrow = dir === "BULL" ? "▲ Bull Pullback" : "▼ Bear Pullback";
+function formatAlert(data: TradingAlert): string {
+  const type  = (data.type || "CONFIRMED").toUpperCase();
+  const dir   = (data.dir  || "").toUpperCase();
+  const pair  = data.pair  || "?";
+  const price = data.price || "?";
+  const tf    = tfLabel(data.tf);
+  const time  = data.time  || new Date().toISOString().slice(11, 16);
+
+  const isConfirmed = type === "CONFIRMED";
+  const isBull      = dir  === "BULL";
+
+  const header = isConfirmed
+    ? (isBull ? "🟢 BUY CONFIRMED" : "🔴 SELL CONFIRMED")
+    : (isBull ? "🟡 Buy Setup (Not Confirmed)" : "🟠 Sell Setup (Not Confirmed)");
+
+  const arrow = isBull ? "▲ Bull Pullback" : "▼ Bear Pullback";
+  const tail  = isConfirmed
+    ? "✅ แท่งปิดแล้ว — พิจารณาเข้า"
+    : "⏳ รอแท่งปิดยืนยันก่อนเข้า";
 
   return [
-    `${emoji} H1 Pullback Confirmed!`,
-    `━━━━━━━━━━━━━━━━━━`,
+    header,
+    "━━━━━━━━━━━━━━━━━━",
     `📊 ${pair}`,
     `📍 ${arrow}`,
     `💰 Price: ${price}`,
     `⏰ TF: ${tf}`,
     `🕐 ${time}`,
-    `━━━━━━━━━━━━━━━━━━`,
-    `เตรียมหาจุดเข้า M15/M5`,
+    "━━━━━━━━━━━━━━━━━━",
+    tail,
   ].join("\n");
 }
 
 export async function POST(request: NextRequest) {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const token   = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   const groupId = process.env.LINE_TRADING_GROUP_ID;
 
   if (!token || !groupId) {
     console.error("[trading-alert] Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_TRADING_GROUP_ID");
-    return NextResponse.json(
-      { error: "Server not configured" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
 
   const raw = await request.text();
