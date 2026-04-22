@@ -83,8 +83,11 @@ function stripHtml(html: string): string {
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/p>/gi, "\n\n")
       .replace(/<\/div>/gi, "\n")
+      // ใส่ space ก่อนลบ inline tags (a, span) กัน "Trump</span>Iran" → "Trump Iran"
+      .replace(/<\/(?:a|span)>/gi, " ")
       .replace(/<[^>]+>/g, ""),
   )
+    .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
