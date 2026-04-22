@@ -52,9 +52,11 @@ const COUNTRY_EMOJI: Record<string, string> = {
 // ------------------- Fetch -------------------
 
 export async function fetchWeek(): Promise<FFEvent[]> {
+  // Cache 60s ที่ Next.js layer → ลดโหลด FairEconomy CDN
+  // (cron ทุก 5 นาทีจะ hit cache ส่วนใหญ่ — feed อัปเดตแค่ตอนต้นสัปดาห์)
   const res = await fetch(FF_FEED_URL, {
     headers: { "User-Agent": "Mozilla/5.0 (line-webhook-proxy)" },
-    cache: "no-store",
+    next: { revalidate: 60 },
   });
   if (!res.ok) {
     throw new Error(`Forex Factory feed HTTP ${res.status}`);
