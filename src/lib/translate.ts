@@ -156,31 +156,53 @@ async function translateGoogle(
 
 // ------------------- Public API -------------------
 
+export type Provider = "auto" | "gemini" | "gtx";
+
 export interface TranslateOptions {
-  /** override env model (optional) */
   model?: string;
   /** force a specific provider — default: auto (gemini → gtx) */
-  provider?: "auto" | "gemini" | "gtx";
+  provider?: Provider;
 }
 
+export interface TranslateResult {
+  text: string;
+  via: "gemini" | "gtx" | "none"; // which provider actually produced the text
+}
+
+export async function translateWithMeta(
+  text: string,
+  targetLang = "th",
+  opts: TranslateOptions = {},
+): Promise<TranslateResult> {
+  const trimmed = text.trim();
+  if (!trimmed) return { text, via: "none" };
+
+  const provider = opts.provider ?? "auto";
+  const geminiKey = process.env.GEMINI_API_KEY;
+
+  if (
+    (provider === "auto" || provider === "gemini") &&
+    geminiKey &&
+    targetLang === "th"
+  ) {
+    const result = await translateGemini(trimmed, geminiKey);
+    if (result) return { text: result, via: "gemini" };
+    if (provider === "gemini") return { text, via: "none" };
+  }
+
+  if (provider === "auto" || provider === "gtx") {
+    const result = await translateGoogle(trimmed, targetLang);
+    return { text: result, via: result === text ? "none" : "gtx" };
+  }
+
+  return { text, via: "none" };
+}
+
+// Backward-compat plain string version
 export async function translate(
   text: string,
   targetLang = "th",
   opts: TranslateOptions = {},
 ): Promise<string> {
-  const trimmed = text.trim();
-  if (!trimmed) return text;
-
-  const provider = opts.provider ?? "auto";
-  const geminiKey = process.env.GEMINI_API_KEY;
-
-  // Gemini path (currently only configured for Thai output)
-  if ((provider === "auto" || provider === "gemini") && geminiKey && targetLang === "th") {
-    const result = await translateGemini(trimmed, geminiKey);
-    if (result) return result;
-    if (provider === "gemini") return text; // explicit gemini → no fallback
-    // auto → fall through to gtx
-  }
-
-  return translateGoogle(trimmed, targetLang);
+  return (await translateWithMeta(text, targetLang, opts)).text;
 }

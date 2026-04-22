@@ -23,7 +23,7 @@ import {
   type DisplayMode,
 } from "@/lib/trump-truth";
 import { broadcast, type BroadcastResult } from "@/lib/notify";
-import { translate } from "@/lib/translate";
+import { translateWithMeta, type Provider } from "@/lib/translate";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -49,6 +49,11 @@ export async function GET(request: NextRequest) {
   const mode = normalizeMode(
     url.searchParams.get("translate") ?? process.env.TRUMP_TRANSLATE_MODE,
   );
+  const providerParam = (url.searchParams.get("provider") || "auto").toLowerCase();
+  const provider: Provider =
+    providerParam === "gemini" || providerParam === "gtx"
+      ? providerParam
+      : "auto";
 
   const now = Date.now();
   const windowMs = windowMin * 60 * 1000;
@@ -67,19 +72,21 @@ export async function GET(request: NextRequest) {
       pubDate: string;
       title: string;
       translated?: boolean;
+      via?: string;
+      preview?: string;
       result?: BroadcastResult;
     }> = [];
 
     for (const post of toSend) {
-      // เตรียม english body (ตัดตามโหมด)
       const enCap = mode === "both" ? CAP_BOTH : CAP_SINGLE;
       const enBody = clip(post.text, enCap);
 
-      // แปลถ้าจำเป็น
       let translated: string | undefined;
+      let via: string | undefined;
       if (mode !== "en" && enBody && enBody !== "[No text]") {
-        const raw = await translate(enBody, "th");
-        translated = clip(raw, mode === "both" ? CAP_BOTH : CAP_SINGLE);
+        const r = await translateWithMeta(enBody, "th", { provider });
+        translated = clip(r.text, mode === "both" ? CAP_BOTH : CAP_SINGLE);
+        via = r.via;
       }
 
       const message = formatPost(
@@ -87,15 +94,15 @@ export async function GET(request: NextRequest) {
         { translated, mode },
       );
 
-      const result = dry
-        ? undefined
-        : await broadcast(message, "trump");
+      const result = dry ? undefined : await broadcast(message, "trump");
 
       sent.push({
         id: post.id,
         pubDate: post.pubDate,
         title: titleSnippet(post),
         translated: translated != null,
+        ...(via ? { via } : {}),
+        ...(dry ? { preview: message } : {}),
         ...(result ? { result } : {}),
       });
     }
@@ -105,6 +112,7 @@ export async function GET(request: NextRequest) {
       now: new Date(now).toISOString(),
       window: { startMs: now - windowMs, endMs: now, minutes: windowMin },
       mode,
+      provider,
       totalInFeed: all.length,
       matchedInWindow: recent.length,
       truncated,
