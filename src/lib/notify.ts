@@ -5,9 +5,11 @@
 //
 // ENV (อ่านอัตโนมัติเมื่อใช้ broadcast()):
 //   LINE_CHANNEL_ACCESS_TOKEN  — required ถ้าจะส่ง LINE
-//   LINE_TRADING_GROUP_ID      — group สัญญาณเทรด (default ของทุก endpoint)
-//   LINE_NEWS_GROUP_ID         — (optional) group สำหรับข่าว — fallback ไป trading
-//   LINE_TRUMP_GROUP_ID        — (optional) group สำหรับ Trump truths — fallback news → trading
+//   LINE_TRADING_GROUP_ID      — group สัญญาณเทรด (ใช้กับ channel "trading" เท่านั้น)
+//   LINE_NEWS_GROUP_ID         — (optional) group สำหรับข่าว — ถ้าไม่ตั้งจะไม่ส่ง LINE
+//   LINE_TRUMP_GROUP_ID        — (optional) group สำหรับ Trump truths — ถ้าไม่ตั้งจะไม่ส่ง LINE
+//   ⚠️  news/trump จะไม่ fallback มาใช้ TRADING group โดยอัตโนมัติ
+//       (เพื่อกัน spam เข้ากลุ่มสัญญาณเทรด)
 //   DISCORD_WEBHOOK_URL        — channel สัญญาณเทรด (default)
 //   DISCORD_NEWS_WEBHOOK_URL   — (optional) channel สำหรับข่าว — fallback ไป default
 //   DISCORD_TRUMP_WEBHOOK_URL  — (optional) channel สำหรับ Trump truths — fallback news → default
@@ -83,16 +85,16 @@ export interface BroadcastResult {
 }
 
 function resolveLineGroupId(channel: Channel): string | null {
-  const trading = process.env.LINE_TRADING_GROUP_ID || null;
-  const news = process.env.LINE_NEWS_GROUP_ID || trading;
+  // news / trump ไม่ fallback มา TRADING group เพื่อกัน spam สัญญาณเทรด
+  // ถ้าอยากให้ news/trump เข้า LINE ต้องตั้ง LINE_NEWS_GROUP_ID / LINE_TRUMP_GROUP_ID ชัดเจน
   switch (channel) {
     case "trump":
-      return process.env.LINE_TRUMP_GROUP_ID || news;
+      return process.env.LINE_TRUMP_GROUP_ID || null;
     case "news":
-      return news;
+      return process.env.LINE_NEWS_GROUP_ID || null;
     case "trading":
     default:
-      return trading;
+      return process.env.LINE_TRADING_GROUP_ID || null;
   }
 }
 
@@ -112,12 +114,16 @@ function resolveDiscordUrl(channel: Channel): string | null {
 
 /**
  * Broadcast a message to LINE + Discord in parallel.
- * Channel routing (fallback chain):
- *   trump   → LINE_TRUMP_GROUP_ID  → LINE_NEWS_GROUP_ID  → LINE_TRADING_GROUP_ID
- *           → DISCORD_TRUMP_WEBHOOK_URL → DISCORD_NEWS_WEBHOOK_URL → DISCORD_WEBHOOK_URL
- *   news    → LINE_NEWS_GROUP_ID    → LINE_TRADING_GROUP_ID
- *           → DISCORD_NEWS_WEBHOOK_URL → DISCORD_WEBHOOK_URL
- *   trading → LINE_TRADING_GROUP_ID / DISCORD_WEBHOOK_URL
+ *
+ * LINE routing (NO fallback):
+ *   trading → LINE_TRADING_GROUP_ID (ถ้าไม่ตั้ง = skip LINE)
+ *   news    → LINE_NEWS_GROUP_ID    (ถ้าไม่ตั้ง = skip LINE)
+ *   trump   → LINE_TRUMP_GROUP_ID   (ถ้าไม่ตั้ง = skip LINE)
+ *
+ * Discord routing (with fallback chain):
+ *   trading → DISCORD_WEBHOOK_URL
+ *   news    → DISCORD_NEWS_WEBHOOK_URL  → DISCORD_WEBHOOK_URL
+ *   trump   → DISCORD_TRUMP_WEBHOOK_URL → DISCORD_NEWS_WEBHOOK_URL → DISCORD_WEBHOOK_URL
  */
 export async function broadcast(
   message: string,
