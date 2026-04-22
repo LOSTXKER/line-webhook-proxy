@@ -12,6 +12,26 @@
 
 const FF_FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
 
+// Default currency filter ถ้าผู้ใช้ไม่ระบุ ?ccy=...
+// Override ได้ผ่าน env: NEWS_DEFAULT_CCY="USD,GBP,JPY,EUR"
+// ตั้งเป็น "" เพื่อปิด filter (รับทุกสกุล)
+const DEFAULT_CCY_FALLBACK = "USD,GBP,JPY";
+
+/**
+ * รวมค่าจาก query (?ccy) + env (NEWS_DEFAULT_CCY) + fallback hard-coded
+ * ลำดับความสำคัญ: query > env > fallback
+ */
+export function resolveCurrencyFilter(queryParam?: string | null): string[] {
+  const raw =
+    queryParam !== undefined && queryParam !== null && queryParam !== ""
+      ? queryParam
+      : process.env.NEWS_DEFAULT_CCY ?? DEFAULT_CCY_FALLBACK;
+  return raw
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+}
+
 export type Impact = "Low" | "Medium" | "High" | "Holiday";
 
 export interface FFEvent {

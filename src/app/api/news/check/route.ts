@@ -26,6 +26,7 @@ import {
   filterByTimeRange,
   formatPreAlert,
   formatActual,
+  resolveCurrencyFilter,
   type Impact,
 } from "@/lib/forex-factory";
 import { broadcast, type BroadcastResult } from "@/lib/notify";
@@ -36,14 +37,10 @@ export const revalidate = 0;
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const impact = (url.searchParams.get("impact") as Impact) || "High";
-  const ccyStr = url.searchParams.get("ccy") || "";
   const dry = url.searchParams.get("dry") === "1";
   const windowMin = parseInt(url.searchParams.get("windowMin") || "5", 10);
   const leadMin = parseInt(url.searchParams.get("leadMin") || "15", 10);
-  const ccyList = ccyStr
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const ccyList = resolveCurrencyFilter(url.searchParams.get("ccy"));
 
   const now = Date.now();
   const windowMs = windowMin * 60 * 1000;

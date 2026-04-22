@@ -17,6 +17,7 @@ import {
   filterByImpact,
   filterByCurrency,
   formatDaySummary,
+  resolveCurrencyFilter,
   type Impact,
 } from "@/lib/forex-factory";
 import { broadcast } from "@/lib/notify";
@@ -27,12 +28,8 @@ export const revalidate = 0;
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const impact = (url.searchParams.get("impact") as Impact) || "Medium";
-  const ccyStr = url.searchParams.get("ccy") || "";
   const dry = url.searchParams.get("dry") === "1";
-  const ccyList = ccyStr
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const ccyList = resolveCurrencyFilter(url.searchParams.get("ccy"));
 
   try {
     const all = await fetchWeek();
