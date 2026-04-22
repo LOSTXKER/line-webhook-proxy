@@ -1,18 +1,19 @@
 // ===================================================================
-// ไฟล์นี้ให้คัดลอกไปวางที่:
-// line-webhook-proxy/src/app/api/trading-alert/route.ts
+// Trading Alert Webhook — Fan-out to LINE + Discord
 // ===================================================================
 //
-// Environment Variables ที่ต้องเพิ่มบน Vercel:
-//   LINE_TRADING_GROUP_ID  = Group ID ของกลุ่ม LINE ที่จะส่งแจ้งเตือน
-//                            (พิมพ์ "group id" ในกลุ่มเพื่อดู)
-//
-// ใช้ LINE_CHANNEL_ACCESS_TOKEN ที่มีอยู่แล้ว
+// Environment Variables:
+//   LINE_CHANNEL_ACCESS_TOKEN  = (required) LINE Messaging API token
+//   LINE_TRADING_GROUP_ID      = (required) Group ID ของกลุ่ม LINE
+//                                (พิมพ์ "group id" ในกลุ่มเพื่อดู)
+//   DISCORD_WEBHOOK_URL        = (optional) Discord Webhook URL
+//                                ถ้าตั้งไว้ → fan-out ไป Discord ด้วย
+//                                ถ้าไม่ตั้ง → ส่งเฉพาะ LINE
 //
 // TradingView Alert Webhook URL:
 //   https://line-webhook-proxy-one.vercel.app/api/trading-alert
 //
-// Pine Script ส่ง payload แบบนี้:
+// Pine Script payload:
 //   { "type": "NOT_CONFIRM" | "CONFIRMED",
 //     "dir":  "BULL" | "BEAR",
 //     "pair": "EURUSD",
@@ -37,6 +38,8 @@ interface TradingAlert {
   time?: string;
 }
 
+type SendResult = { ok: true } | { ok: false; status: number; error: string };
+
 function formatAlert(data: TradingAlert): string {
   const type = (data.type || "CONFIRMED").toUpperCase();
   const dir  = (data.dir  || "").toUpperCase();
@@ -55,9 +58,44 @@ function formatAlert(data: TradingAlert): string {
   return `${label} ${pair} ⏰ ${time} ${dotEmj}\n${cta}`;
 }
 
+async function sendLine(token: string, groupId: string, message: string): Promise<SendResult> {
+  try {
+    const res = await fetch(LINE_PUSH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        to: groupId,
+        messages: [{ type: "text", text: message }],
+      }),
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, status: res.status, error: await res.text() };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function sendDiscord(webhookUrl: string, message: string): Promise<SendResult> {
+  try {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: message }),
+    });
+    if (res.ok || res.status === 204) return { ok: true };
+    return { ok: false, status: res.status, error: await res.text() };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function POST(request: NextRequest) {
-  const token   = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  const groupId = process.env.LINE_TRADING_GROUP_ID;
+  const token       = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const groupId     = process.env.LINE_TRADING_GROUP_ID;
+  const discordHook = process.env.DISCORD_WEBHOOK_URL;
 
   if (!token || !groupId) {
     console.error("[trading-alert] Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_TRADING_GROUP_ID");
@@ -76,37 +114,40 @@ export async function POST(request: NextRequest) {
 
   const message = formatAlert(data);
 
-  const res = await fetch(LINE_PUSH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      to: groupId,
-      messages: [{ type: "text", text: message }],
-    }),
-  });
+  // Fan-out: ส่ง LINE และ Discord ขนานกัน — ฝั่งใดล้มไม่กระทบอีกฝั่ง
+  const [lineRes, discordRes] = await Promise.all([
+    sendLine(token, groupId, message),
+    discordHook ? sendDiscord(discordHook, message) : Promise.resolve(null),
+  ]);
 
-  if (res.ok) {
-    console.log("[trading-alert] LINE push OK");
-    return NextResponse.json({ ok: true });
+  console.log("[trading-alert] LINE:", lineRes.ok ? "OK" : `FAIL ${lineRes.status} ${lineRes.error}`);
+  if (discordRes) {
+    console.log("[trading-alert] Discord:", discordRes.ok ? "OK" : `FAIL ${discordRes.status} ${discordRes.error}`);
+  } else {
+    console.log("[trading-alert] Discord: SKIPPED (no DISCORD_WEBHOOK_URL)");
   }
 
-  const err = await res.text();
-  console.error("[trading-alert] LINE push failed:", res.status, err);
-  return NextResponse.json({ ok: false, error: err }, { status: 500 });
+  const overallOk = lineRes.ok && (!discordRes || discordRes.ok);
+  return NextResponse.json(
+    {
+      ok: overallOk,
+      line:    lineRes,
+      discord: discordRes ?? { skipped: true },
+    },
+    { status: overallOk ? 200 : 500 },
+  );
 }
 
 export async function GET() {
-  const configured = !!(
-    process.env.LINE_CHANNEL_ACCESS_TOKEN &&
-    process.env.LINE_TRADING_GROUP_ID
-  );
+  const lineOk    = !!(process.env.LINE_CHANNEL_ACCESS_TOKEN && process.env.LINE_TRADING_GROUP_ID);
+  const discordOk = !!process.env.DISCORD_WEBHOOK_URL;
 
   return NextResponse.json({
     status: "ok",
     endpoint: "trading-alert",
-    configured,
+    targets: {
+      line:    lineOk    ? "configured" : "missing",
+      discord: discordOk ? "configured" : "skipped",
+    },
   });
 }
