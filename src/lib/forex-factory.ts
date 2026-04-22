@@ -131,13 +131,41 @@ function fmtDayLabel(ms: number, tzOffsetHours = 7): string {
   return `${day} ${date}/${month}`;
 }
 
-function fmtLine(e: FFEvent, tzOffsetHours = 7): string {
+function fmtLine(e: FFEvent, tzOffsetHours = 7, withDay = false): string {
   const time = fmtTime(e.date, tzOffsetHours);
-  const cc = COUNTRY_EMOJI[e.country.toUpperCase()] ?? e.country;
   const imp = IMPACT_EMOJI[e.impact] ?? "";
   const fc = e.forecast ? ` F:${e.forecast}` : "";
   const pv = e.previous ? ` P:${e.previous}` : "";
-  return `${time} ${imp} ${cc} ${e.title}${fc}${pv}`;
+  const dayPrefix = withDay
+    ? `${fmtDayLabel(new Date(e.date).getTime(), tzOffsetHours)} `
+    : "";
+  return `  • ${dayPrefix}${time} ${imp} ${e.title}${fc}${pv}`;
+}
+
+function fmtCurrencyHeader(country: string): string {
+  const cc = country.toUpperCase();
+  const flag = COUNTRY_EMOJI[cc] ?? "🏳️";
+  return `${flag} ${cc}`;
+}
+
+function groupByCurrency(events: FFEvent[]): Map<string, FFEvent[]> {
+  // เรียงสกุลเงินตามจำนวน event มาก→น้อย แล้วเรียง alphabet เพื่อความ stable
+  const map = new Map<string, FFEvent[]>();
+  for (const ev of events) {
+    const key = ev.country.toUpperCase();
+    const arr = map.get(key) ?? [];
+    arr.push(ev);
+    map.set(key, arr);
+  }
+  for (const arr of map.values()) {
+    arr.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }
+  return new Map(
+    [...map.entries()].sort((a, b) => {
+      if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+      return a[0].localeCompare(b[0]);
+    }),
+  );
 }
 
 // ------------------- Public formatters -------------------
@@ -150,14 +178,15 @@ export function formatDaySummary(
   if (!events.length) {
     return `📅 ข่าวประจำวัน ${fmtDayLabel(refMs, tzOffsetHours)}\n— ไม่มีข่าวสำคัญ —`;
   }
-  const sorted = [...events].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-  );
-  const lines = sorted.map((e) => fmtLine(e, tzOffsetHours));
-  return [
+  const groups = groupByCurrency(events);
+  const blocks: string[] = [
     `📅 ข่าวประจำวัน ${fmtDayLabel(refMs, tzOffsetHours)} (UTC+${tzOffsetHours})`,
-    ...lines,
-  ].join("\n");
+  ];
+  for (const [country, items] of groups) {
+    blocks.push(`\n${fmtCurrencyHeader(country)}`);
+    for (const ev of items) blocks.push(fmtLine(ev, tzOffsetHours));
+  }
+  return blocks.join("\n");
 }
 
 export function formatWeekSummary(
@@ -167,41 +196,29 @@ export function formatWeekSummary(
   if (!events.length) {
     return "📰 ข่าวประจำสัปดาห์\n— ไม่มีข่าวสำคัญ —";
   }
-  const sorted = [...events].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-  );
-  const groups = new Map<string, FFEvent[]>();
-  for (const ev of sorted) {
-    const localMs =
-      new Date(ev.date).getTime() + tzOffsetHours * 3600 * 1000;
-    const dayKey = Math.floor(localMs / 86400000).toString();
-    const arr = groups.get(dayKey) ?? [];
-    arr.push(ev);
-    groups.set(dayKey, arr);
-  }
+  const groups = groupByCurrency(events);
   const blocks: string[] = [`📰 ข่าวสำคัญสัปดาห์นี้ (UTC+${tzOffsetHours})`];
-  for (const [dayKey, items] of groups) {
-    const dayMs = parseInt(dayKey, 10) * 86400000 - tzOffsetHours * 3600 * 1000;
-    blocks.push(`\n— ${fmtDayLabel(dayMs, tzOffsetHours)} —`);
-    for (const ev of items) blocks.push(fmtLine(ev, tzOffsetHours));
+  for (const [country, items] of groups) {
+    blocks.push(`\n${fmtCurrencyHeader(country)} (${items.length})`);
+    for (const ev of items) blocks.push(fmtLine(ev, tzOffsetHours, true));
   }
   return blocks.join("\n");
 }
 
 export function formatPreAlert(e: FFEvent, tzOffsetHours = 7): string {
   const time = fmtTime(e.date, tzOffsetHours);
-  const cc = COUNTRY_EMOJI[e.country.toUpperCase()] ?? e.country;
+  const head = fmtCurrencyHeader(e.country);
   const imp = IMPACT_EMOJI[e.impact] ?? "";
   const fc = e.forecast ? `\n📈 Forecast: ${e.forecast}` : "";
   const pv = e.previous ? `\n📊 Previous: ${e.previous}` : "";
-  return `⚠️ NEWS ALERT (15 min)\n${imp} ${cc} ${e.title}\n⏰ ${time} (UTC+${tzOffsetHours})${fc}${pv}\n\n🔕 ระวังการเทรดช่วงข่าวออก`;
+  return `⚠️ NEWS ALERT (15 min)\n${head} ${imp} ${e.title}\n⏰ ${time} (UTC+${tzOffsetHours})${fc}${pv}\n\n🔕 ระวังการเทรดช่วงข่าวออก`;
 }
 
 export function formatActual(e: FFEvent, tzOffsetHours = 7): string {
   const time = fmtTime(e.date, tzOffsetHours);
-  const cc = COUNTRY_EMOJI[e.country.toUpperCase()] ?? e.country;
+  const head = fmtCurrencyHeader(e.country);
   const imp = IMPACT_EMOJI[e.impact] ?? "";
   const fc = e.forecast ? `\n📈 Forecast: ${e.forecast}` : "";
   const pv = e.previous ? `\n📊 Previous: ${e.previous}` : "";
-  return `🔔 NEWS RELEASED\n${imp} ${cc} ${e.title}\n⏰ ${time} (UTC+${tzOffsetHours})${fc}${pv}`;
+  return `🔔 NEWS RELEASED\n${head} ${imp} ${e.title}\n⏰ ${time} (UTC+${tzOffsetHours})${fc}${pv}`;
 }
