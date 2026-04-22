@@ -89,7 +89,7 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-function clip(s: string, max: number = MAX_CONTENT_LEN): string {
+export function clip(s: string, max: number = MAX_CONTENT_LEN): string {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + "…" : s;
 }
 
@@ -164,9 +164,31 @@ function fmtTime(ms: number, tzOffsetHours = 7): string {
   return `${hh}:${mm} (UTC+${tzOffsetHours}) | ${dd}/${mo}/${yy}`;
 }
 
-export function formatPost(p: TrumpPost, tzOffsetHours = 7): string {
+export type DisplayMode = "en" | "th" | "both";
+
+export interface FormatOptions {
+  /** ข้อความแปลภาษาไทย (จะใช้เมื่อ mode = "th" หรือ "both") */
+  translated?: string;
+  /** โหมดการแสดงผล (default: "en") */
+  mode?: DisplayMode;
+  /** offset timezone (default: 7 = UTC+7) */
+  tzOffsetHours?: number;
+}
+
+export function formatPost(p: TrumpPost, opts: FormatOptions = {}): string {
+  const { translated, mode = "en", tzOffsetHours = 7 } = opts;
   const head = p.isRetruth ? "🇺🇸 TRUMP TRUTH 🔁 (re-truth)" : "🇺🇸 TRUMP TRUTH 🆕";
-  const body = p.text || "[No text]";
   const time = fmtTime(p.pubMs, tzOffsetHours);
-  return `${head}\n"${body}"\n\n🕘 ${time}\n🔗 ${p.originalUrl}`;
+  const en = p.text || "[No text]";
+
+  let body: string;
+  if (mode === "th" && translated) {
+    body = `🇹🇭 ${translated}`;
+  } else if (mode === "both" && translated) {
+    body = `🇹🇭 ${translated}\n\n🇬🇧 ${en}`;
+  } else {
+    body = `"${en}"`;
+  }
+
+  return `${head}\n${body}\n\n🕘 ${time}\n🔗 ${p.originalUrl}`;
 }
