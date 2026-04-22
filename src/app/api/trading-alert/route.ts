@@ -52,7 +52,7 @@ function formatAlert(data: TradingAlert): string {
     ? "✅ เตรียมหาจุดเข้า M15/M5"
     : "⏳ รอแท่งปิดยืนยัน";
 
-  return `${label} ${pair} ⏰ ${time} ${dotEmj}\n${cta}`;
+  return `${label} ${pair} ⏰ ${time} ${dotEmj} ${cta}`;
 }
 
 export async function POST(request: NextRequest) {
