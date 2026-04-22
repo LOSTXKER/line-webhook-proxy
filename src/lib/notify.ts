@@ -7,8 +7,10 @@
 //   LINE_CHANNEL_ACCESS_TOKEN  — required ถ้าจะส่ง LINE
 //   LINE_TRADING_GROUP_ID      — group สัญญาณเทรด (default ของทุก endpoint)
 //   LINE_NEWS_GROUP_ID         — (optional) group สำหรับข่าว — fallback ไป trading
+//   LINE_TRUMP_GROUP_ID        — (optional) group สำหรับ Trump truths — fallback news → trading
 //   DISCORD_WEBHOOK_URL        — channel สัญญาณเทรด (default)
 //   DISCORD_NEWS_WEBHOOK_URL   — (optional) channel สำหรับข่าว — fallback ไป default
+//   DISCORD_TRUMP_WEBHOOK_URL  — (optional) channel สำหรับ Trump truths — fallback news → default
 // ===================================================================
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
@@ -17,7 +19,7 @@ export type SendResult =
   | { ok: true }
   | { ok: false; status: number; error: string };
 
-export type Channel = "trading" | "news";
+export type Channel = "trading" | "news" | "trump";
 
 export async function sendLine(
   token: string,
@@ -80,10 +82,42 @@ export interface BroadcastResult {
   discord: SendResult | { skipped: true };
 }
 
+function resolveLineGroupId(channel: Channel): string | null {
+  const trading = process.env.LINE_TRADING_GROUP_ID || null;
+  const news = process.env.LINE_NEWS_GROUP_ID || trading;
+  switch (channel) {
+    case "trump":
+      return process.env.LINE_TRUMP_GROUP_ID || news;
+    case "news":
+      return news;
+    case "trading":
+    default:
+      return trading;
+  }
+}
+
+function resolveDiscordUrl(channel: Channel): string | null {
+  const trading = process.env.DISCORD_WEBHOOK_URL || null;
+  const news = process.env.DISCORD_NEWS_WEBHOOK_URL || trading;
+  switch (channel) {
+    case "trump":
+      return process.env.DISCORD_TRUMP_WEBHOOK_URL || news;
+    case "news":
+      return news;
+    case "trading":
+    default:
+      return trading;
+  }
+}
+
 /**
  * Broadcast a message to LINE + Discord in parallel.
- * Channel="news" จะใช้ LINE_NEWS_GROUP_ID + DISCORD_NEWS_WEBHOOK_URL ก่อน,
- * fallback ไปตัว trading ถ้าไม่ตั้ง.
+ * Channel routing (fallback chain):
+ *   trump   → LINE_TRUMP_GROUP_ID  → LINE_NEWS_GROUP_ID  → LINE_TRADING_GROUP_ID
+ *           → DISCORD_TRUMP_WEBHOOK_URL → DISCORD_NEWS_WEBHOOK_URL → DISCORD_WEBHOOK_URL
+ *   news    → LINE_NEWS_GROUP_ID    → LINE_TRADING_GROUP_ID
+ *           → DISCORD_NEWS_WEBHOOK_URL → DISCORD_WEBHOOK_URL
+ *   trading → LINE_TRADING_GROUP_ID / DISCORD_WEBHOOK_URL
  */
 export async function broadcast(
   message: string,
@@ -93,20 +127,8 @@ export async function broadcast(
   const lineToken =
     override.lineToken ?? process.env.LINE_CHANNEL_ACCESS_TOKEN ?? null;
 
-  const lineGroupId =
-    override.lineGroupId ??
-    (channel === "news"
-      ? process.env.LINE_NEWS_GROUP_ID || process.env.LINE_TRADING_GROUP_ID
-      : process.env.LINE_TRADING_GROUP_ID) ??
-    null;
-
-  const discordUrl =
-    override.discordUrl ??
-    (channel === "news"
-      ? process.env.DISCORD_NEWS_WEBHOOK_URL ||
-        process.env.DISCORD_WEBHOOK_URL
-      : process.env.DISCORD_WEBHOOK_URL) ??
-    null;
+  const lineGroupId = override.lineGroupId ?? resolveLineGroupId(channel);
+  const discordUrl = override.discordUrl ?? resolveDiscordUrl(channel);
 
   const lineTask: Promise<SendResult | { skipped: true }> =
     lineToken && lineGroupId

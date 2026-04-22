@@ -12,6 +12,10 @@
     {
       "path": "/api/news/check?impact=High",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/trump/check?windowMin=5",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
