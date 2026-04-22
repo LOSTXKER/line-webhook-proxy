@@ -175,20 +175,52 @@ export interface FormatOptions {
   tzOffsetHours?: number;
 }
 
+// ดึง "RT @username" ที่อยู่ต้นข้อความออก — เพื่อไม่ให้ไปติดกับเนื้อหา
+// (RSS mirror เอา title+description มา concat โดยไม่มี space → "RT @realDonaldTrumpIran ...")
+const RT_PREFIX = /^\s*RT\s*@?(\w+)\s*[:：-]?\s*/i;
+
+function stripRtPrefix(s: string): { author: string | null; body: string } {
+  const m = s.match(RT_PREFIX);
+  if (!m) return { author: null, body: s };
+  return { author: m[1], body: s.slice(m[0].length).trim() };
+}
+
+const DIVIDER = "─".repeat(28);
+
 export function formatPost(p: TrumpPost, opts: FormatOptions = {}): string {
   const { translated, mode = "en", tzOffsetHours = 7 } = opts;
-  const head = p.isRetruth ? "🇺🇸 TRUMP TRUTH 🔁 (re-truth)" : "🇺🇸 TRUMP TRUTH 🆕";
   const time = fmtTime(p.pubMs, tzOffsetHours);
-  const en = p.text || "[No text]";
 
-  let body: string;
-  if (mode === "th" && translated) {
-    body = `🇹🇭 ${translated}`;
-  } else if (mode === "both" && translated) {
-    body = `🇹🇭 ${translated}\n\n🇬🇧 ${en}`;
+  // แยก RT prefix ออก — แสดงใน header เป็น "↪️ from @user" แทน
+  const enParsed = stripRtPrefix(p.text || "");
+  const enBody = enParsed.body || "[No text]";
+  const thBody = translated ? stripRtPrefix(translated).body : undefined;
+  const rtAuthor = enParsed.author;
+
+  // ----- Header -----
+  const typeLabel = p.isRetruth ? "Re-truth 🔁" : "New 🆕";
+  const headLines = [
+    `🇺🇸 TRUMP TRUTH — ${typeLabel}`,
+    rtAuthor
+      ? `↪️ from @${rtAuthor} · ${time}`
+      : `🕘 ${time}`,
+    DIVIDER,
+  ];
+
+  // ----- Body sections -----
+  const sections: string[] = [];
+  if (mode === "th" && thBody) {
+    sections.push(`🇹🇭 ภาษาไทย\n${thBody}`);
+  } else if (mode === "both" && thBody) {
+    sections.push(`🇹🇭 ภาษาไทย\n${thBody}`);
+    sections.push(`🇬🇧 English\n${enBody}`);
   } else {
-    body = `"${en}"`;
+    sections.push(enBody);
   }
 
-  return `${head}\n${body}\n\n🕘 ${time}\n🔗 ${p.originalUrl}`;
+  return [
+    headLines.join("\n"),
+    sections.join("\n\n"),
+    `🔗 ${p.originalUrl}`,
+  ].join("\n\n");
 }
