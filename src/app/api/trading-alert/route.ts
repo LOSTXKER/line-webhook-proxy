@@ -2,13 +2,7 @@
 // Trading Alert Webhook — Fan-out to LINE + Discord
 // ===================================================================
 //
-// Environment Variables:
-//   LINE_CHANNEL_ACCESS_TOKEN  = (required) LINE Messaging API token
-//   LINE_TRADING_GROUP_ID      = (required) Group ID ของกลุ่ม LINE
-//                                (พิมพ์ "group id" ในกลุ่มเพื่อดู)
-//   DISCORD_WEBHOOK_URL        = (optional) Discord Webhook URL
-//                                ถ้าตั้งไว้ → fan-out ไป Discord ด้วย
-//                                ถ้าไม่ตั้ง → ส่งเฉพาะ LINE
+// Environment Variables → ดูที่ lib/notify.ts
 //
 // TradingView Alert Webhook URL:
 //   https://line-webhook-proxy-one.vercel.app/api/trading-alert
@@ -19,11 +13,14 @@
 //     "pair": "EURUSD",
 //     "tf":   "5",
 //     "price": "1.0850",
-//     "time": "14:30" }
+//     "time": "14:30",
+//     "channel": "trading" | "trump" | "news" }
+//
+// channel routes to the matching Discord/LINE webhook (see notify.ts)
 // ===================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { broadcast } from "@/lib/notify";
+import { broadcast, type Channel } from "@/lib/notify";
 
 type AlertType = "NOT_CONFIRM" | "CONFIRMED" | string;
 type AlertDir = "BULL" | "BEAR" | string;
@@ -35,6 +32,7 @@ interface TradingAlert {
   tf?: string;
   price?: string;
   time?: string;
+  channel?: Channel;
 }
 
 function formatAlert(data: TradingAlert): string {
@@ -67,7 +65,8 @@ export async function POST(request: NextRequest) {
   }
 
   const message = formatAlert(data);
-  const result = await broadcast(message, "trading");
+  const channel: Channel = data.channel ?? "trading";
+  const result = await broadcast(message, channel);
 
   console.log(
     "[trading-alert] LINE:",
@@ -83,14 +82,16 @@ export async function GET() {
   const lineOk = !!(
     process.env.LINE_CHANNEL_ACCESS_TOKEN && process.env.LINE_TRADING_GROUP_ID
   );
-  const discordOk = !!process.env.DISCORD_WEBHOOK_URL;
+  const check = (key: string) => (process.env[key] ? "configured" : "missing");
 
   return NextResponse.json({
     status: "ok",
     endpoint: "trading-alert",
     targets: {
       line: lineOk ? "configured" : "missing",
-      discord: discordOk ? "configured" : "skipped",
+      discord: check("DISCORD_WEBHOOK_URL"),
+      discord_trump: check("DISCORD_TRUMP_WEBHOOK_URL"),
+      discord_news: check("DISCORD_NEWS_WEBHOOK_URL"),
     },
   });
 }
