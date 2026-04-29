@@ -2,15 +2,17 @@
 // GET /api/trump/check
 // Cron-friendly — ส่ง alert ทุกโพสต์ใหม่จาก Truth Social ของ Trump
 //
-// Stateless detection: ใช้ pubDate ภายใน window N นาทีย้อนหลัง
-// ถ้า cron ยิงทุก 5 นาที + window=5 → coverage 100% โดยไม่ซ้ำ
+// Stateful dedup: ใช้ Vercel KV เก็บ id ที่ส่งแล้ว (TTL 7 วัน)
+//   → window กว้างได้โดยไม่ส่งซ้ำ → กัน mirror RSS delay
+//   → ถ้า KV ไม่ได้ตั้ง: fallback no-dedup (เหมือน stateless เดิม)
 //
 // Query params:
-//   ?windowMin=5      ขนาด window ย้อนหลัง (default: 5)
+//   ?windowMin=15     ขนาด window ย้อนหลัง (default: 15 — overlap กัน mirror delay)
 //   ?dry=1            preview ไม่ส่งจริง
 //   ?skipRT=1         ข้าม retruth (default: ส่งทั้งหมด)
 //   ?max=10           จำกัดจำนวนต่อรอบ (default: 10)
 //   ?translate=both   th-only / both / en (default: env TRUMP_TRANSLATE_MODE หรือ "both")
+//   ?nodedup=1        ปิด dedup (เช่น manual replay)
 // ===================================================================
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,6 +26,9 @@ import {
 } from "@/lib/trump-truth";
 import { broadcast, type BroadcastResult } from "@/lib/notify";
 import { translateWithMeta, type Provider } from "@/lib/translate";
+import { filterUnseen, markSeen, isKvConfigured } from "@/lib/seen-store";
+
+const SEEN_NAMESPACE = "trump";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -44,8 +49,11 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const dry = url.searchParams.get("dry") === "1";
   const skipRT = url.searchParams.get("skipRT") === "1";
-  const windowMin = parseInt(url.searchParams.get("windowMin") || "5", 10);
+  const windowMin = parseInt(url.searchParams.get("windowMin") || "15", 10);
   const max = parseInt(url.searchParams.get("max") || "10", 10);
+  // dedup ผ่าน Vercel KV — กันส่งซ้ำเมื่อ window overlap
+  // ตั้ง ?nodedup=1 เพื่อข้าม dedup (เช่น ตอน manual replay)
+  const noDedup = url.searchParams.get("nodedup") === "1";
   const mode = normalizeMode(
     url.searchParams.get("translate") ?? process.env.TRUMP_TRANSLATE_MODE,
   );
@@ -64,8 +72,20 @@ export async function GET(request: NextRequest) {
     if (skipRT) recent = recent.filter((p) => !p.isRetruth);
 
     recent.sort((a, b) => a.pubMs - b.pubMs);
-    const truncated = recent.length > max;
-    const toSend = truncated ? recent.slice(-max) : recent;
+
+    // dedup: กรองเอาเฉพาะ post id ที่ยังไม่เคยส่ง
+    let toSend = recent;
+    let skippedSeen = 0;
+    if (!dry && !noDedup && recent.length > 0) {
+      const ids = recent.map((p) => p.id).filter(Boolean);
+      const unseenIds = new Set(await filterUnseen(SEEN_NAMESPACE, ids));
+      const beforeCount = toSend.length;
+      toSend = toSend.filter((p) => unseenIds.has(p.id));
+      skippedSeen = beforeCount - toSend.length;
+    }
+
+    const truncated = toSend.length > max;
+    toSend = truncated ? toSend.slice(-max) : toSend;
 
     const sent: Array<{
       id: string;
@@ -77,6 +97,7 @@ export async function GET(request: NextRequest) {
       result?: BroadcastResult;
     }> = [];
 
+    const sentIds: string[] = [];
     for (const post of toSend) {
       const enCap = mode === "both" ? CAP_BOTH : CAP_SINGLE;
       const enBody = clip(post.text, enCap);
@@ -96,6 +117,12 @@ export async function GET(request: NextRequest) {
 
       const result = dry ? undefined : await broadcast(message, "trump");
 
+      // เก็บ id ที่ส่งแล้ว (เฉพาะที่ broadcast สำเร็จอย่างน้อย 1 ช่อง)
+      const broadcastOk =
+        !!result && (("ok" in result.discord && result.discord.ok) ||
+                     ("ok" in result.line && result.line.ok));
+      if (post.id && broadcastOk) sentIds.push(post.id);
+
       sent.push({
         id: post.id,
         pubDate: post.pubDate,
@@ -107,14 +134,18 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    if (sentIds.length > 0) await markSeen(SEEN_NAMESPACE, sentIds);
+
     return NextResponse.json({
       ok: true,
       now: new Date(now).toISOString(),
       window: { startMs: now - windowMs, endMs: now, minutes: windowMin },
       mode,
       provider,
+      kvEnabled: isKvConfigured(),
       totalInFeed: all.length,
       matchedInWindow: recent.length,
+      skippedSeen,
       truncated,
       dry,
       sent,
