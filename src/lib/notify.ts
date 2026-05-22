@@ -4,15 +4,15 @@
 // ใช้ร่วมกันระหว่าง trading-alert และ news endpoints
 //
 // ENV (อ่านอัตโนมัติเมื่อใช้ broadcast()):
-//   LINE_CHANNEL_ACCESS_TOKEN  — required ถ้าจะส่ง LINE
-//   LINE_TRADING_GROUP_ID      — group สัญญาณเทรด (ใช้กับ channel "trading" เท่านั้น)
-//   LINE_NEWS_GROUP_ID         — (optional) group สำหรับข่าว — ถ้าไม่ตั้งจะไม่ส่ง LINE
-//   LINE_TRUMP_GROUP_ID        — (optional) group สำหรับ Trump truths — ถ้าไม่ตั้งจะไม่ส่ง LINE
-//   ⚠️  news/trump จะไม่ fallback มาใช้ TRADING group โดยอัตโนมัติ
-//       (เพื่อกัน spam เข้ากลุ่มสัญญาณเทรด)
 //   DISCORD_WEBHOOK_URL        — channel สัญญาณเทรด (default)
 //   DISCORD_NEWS_WEBHOOK_URL   — (optional) channel สำหรับข่าว — fallback ไป default
 //   DISCORD_TRUMP_WEBHOOK_URL  — (optional) channel สำหรับ Trump truths — fallback news → default
+//
+// ⚠️  LINE ถูกปิดถาวรสำหรับทุก channel (trading/news/trump) — Discord-only
+//     เพราะ LINE Messaging API free tier = 200 msg/month ไม่พอกับ news cron
+//     ที่ยิงทุก 5 นาที + trading alerts. Anajak HR ใช้ token เดียวกัน — ถ้า
+//     proxy กิน quota หมด พนักงานก็ไม่ได้แจ้งเตือนเช็คอิน-เช็คเอาท์
+//     LINE_CHANNEL_ACCESS_TOKEN และ LINE_*_GROUP_ID ถูก ignore
 // ===================================================================
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
@@ -84,18 +84,10 @@ export interface BroadcastResult {
   discord: SendResult | { skipped: true };
 }
 
-function resolveLineGroupId(channel: Channel): string | null {
-  // news / trump ไม่ fallback มา TRADING group เพื่อกัน spam สัญญาณเทรด
-  // ถ้าอยากให้ news/trump เข้า LINE ต้องตั้ง LINE_NEWS_GROUP_ID / LINE_TRUMP_GROUP_ID ชัดเจน
-  switch (channel) {
-    case "trump":
-      return process.env.LINE_TRUMP_GROUP_ID || null;
-    case "news":
-      return process.env.LINE_NEWS_GROUP_ID || null;
-    case "trading":
-    default:
-      return process.env.LINE_TRADING_GROUP_ID || null;
-  }
+// LINE ถูกปิดถาวรสำหรับทุก channel — Discord-only
+// เก็บ function signature ไว้เผื่ออนาคตจะเปิดบาง channel กลับมา
+function resolveLineGroupId(_channel: Channel): string | null {
+  return null;
 }
 
 function resolveDiscordUrl(channel: Channel): string | null {
@@ -115,10 +107,8 @@ function resolveDiscordUrl(channel: Channel): string | null {
 /**
  * Broadcast a message to LINE + Discord in parallel.
  *
- * LINE routing (NO fallback):
- *   trading → LINE_TRADING_GROUP_ID (ถ้าไม่ตั้ง = skip LINE)
- *   news    → LINE_NEWS_GROUP_ID    (ถ้าไม่ตั้ง = skip LINE)
- *   trump   → LINE_TRUMP_GROUP_ID   (ถ้าไม่ตั้ง = skip LINE)
+ * LINE: ปิดถาวรสำหรับทุก channel — broadcast() จะ return { skipped: true } เสมอ
+ *       (เพื่อประหยัด LINE free-tier quota — Anajak HR ใช้ token เดียวกัน)
  *
  * Discord routing (with fallback chain):
  *   trading → DISCORD_WEBHOOK_URL

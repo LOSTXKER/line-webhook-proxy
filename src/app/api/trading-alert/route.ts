@@ -79,16 +79,13 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  const lineOk = !!(
-    process.env.LINE_CHANNEL_ACCESS_TOKEN && process.env.LINE_TRADING_GROUP_ID
-  );
   const check = (key: string) => (process.env[key] ? "configured" : "missing");
 
   return NextResponse.json({
     status: "ok",
     endpoint: "trading-alert",
     targets: {
-      line: lineOk ? "configured" : "missing",
+      line: "disabled (trading is Discord-only)",
       discord: check("DISCORD_WEBHOOK_URL"),
       discord_trump: check("DISCORD_TRUMP_WEBHOOK_URL"),
       discord_news: check("DISCORD_NEWS_WEBHOOK_URL"),
